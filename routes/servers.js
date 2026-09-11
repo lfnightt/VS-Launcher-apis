@@ -3,9 +3,9 @@ const router = express.Router();
 const fetch = require('node-fetch');
 
 // FiveM Official API endpoints
-const FIVEM_API = {
-    gta5: 'https://servers-api.fivem.net/api/servers/query',
-    redm: 'https://servers-api.fivem.net/api/servers/query'
+const FIVEM_ENDPOINTS = {
+    gta5: 'https://runtime.fivem.net/servers/fivem/servers.json',
+    redm: 'https://runtime.fivem.net/servers/redm/servers.json'
 };
 
 // Cache for servers data
@@ -33,43 +33,44 @@ async function fetchServers(platform) {
     }
 
     try {
-        // FiveM API uses different game identifiers
-        const gameId = platform === 'gta5' ? 'gtav' : 'redm';
+        const url = FIVEM_ENDPOINTS[platform];
+        console.log(`Fetching servers from: ${url}`);
         
-        const response = await fetch(`${FIVEM_API[platform]}?games[]=${gameId}`, {
+        const response = await fetch(url, {
             headers: {
                 'Accept': 'application/json',
-                'User-Agent': 'VS-Launcher/1.0',
-                'x-apis-key': 'xF2pSndN7PQnNAlMPdDafQ'
+                'User-Agent': 'VS-Launcher/1.0'
             },
-            timeout: 15000
+            timeout: 20000
         });
 
         if (!response.ok) {
-            throw new Error(`FiveM API error: ${response.status}`);
+            throw new Error(`FiveM API error: ${response.status} ${response.statusText}`);
         }
 
         const rawData = await response.json();
+        console.log(`Got ${Array.isArray(rawData) ? rawData.length : 'unknown'} raw servers for ${platform}`);
         
-        // Transform FiveM data to match our expected format
-        const servers = (rawData || []).map(server => ({
-            id: server.EndPoint || server.id,
-            hostName: server.Hostname || server.hostname || '',
-            projectName: server.Name || server.name || '',
-            projectDescription: server.Description || server.description || '',
+        // FiveM servers.json returns an array directly
+        // Each item has: Endpoint, Hostname, Name, Description, Players, MaxClients, etc.
+        const servers = (Array.isArray(rawData) ? rawData : []).map(server => ({
+            id: server.Endpoint || '',
+            hostName: server.Hostname || '',
+            projectName: server.Name || '',
+            projectDescription: server.Description || '',
             players: {
-                count: server.Players || server.players || 0,
-                maxCount: server.MaxClients || server.maxclients || 0
+                count: server.Players || 0,
+                maxCount: server.MaxClients || 0
             },
-            locale: server.Locale || server.locale || 'en',
-            localeCountry: server.LocaleCountry || server.localeCountry || 'us',
+            locale: server.Locale || 'en',
+            localeCountry: server.LocaleCountry || 'us',
             boost: server.Vars?.boost || 0,
             tags: {
-                list: server.Tags || server.tags || []
+                list: server.Tags || []
             },
-            iconVersion: server.IconVersion || server.iconVersion || 0,
+            iconVersion: server.IconVersion || 0,
             offline: server.Available !== undefined ? !server.Available : false,
-            licenseType: server.LicenseType || server.licenseType || null
+            licenseType: server.LicenseType || null
         }));
 
         const result = {
@@ -81,12 +82,14 @@ async function fetchServers(platform) {
         serversCache[platform] = result;
         serversCache.lastFetch[platform] = now;
         
+        console.log(`Processed ${servers.length} servers for ${platform}`);
         return result;
     } catch (error) {
         console.error(`Error fetching servers for ${platform}:`, error.message);
         
         // Return cached data if available
         if (serversCache[platform]) {
+            console.log(`Returning cached data for ${platform}`);
             return serversCache[platform];
         }
         
