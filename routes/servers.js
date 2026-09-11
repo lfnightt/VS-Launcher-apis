@@ -2,8 +2,11 @@ const express = require('express');
 const router = express.Router();
 const fetch = require('node-fetch');
 
-// Upstream API configuration
-const UPSTREAM_API = process.env.UPSTREAM_API || 'https://api.la5m.ir';
+// FiveM Official API endpoints
+const FIVEM_API = {
+    gta5: 'https://servers-api.fivem.net/api/servers/query',
+    redm: 'https://servers-api.fivem.net/api/servers/query'
+};
 
 // Cache for servers data
 let serversCache = {
@@ -18,7 +21,7 @@ let serversCache = {
 const CACHE_TTL = 60 * 1000; // 1 minute cache
 
 /**
- * Fetch servers from upstream API with caching
+ * Fetch servers from FiveM API with caching
  */
 async function fetchServers(platform) {
     const now = Date.now();
@@ -30,25 +33,55 @@ async function fetchServers(platform) {
     }
 
     try {
-        const response = await fetch(`${UPSTREAM_API}/servers?platform=${platform}`, {
+        // FiveM API uses different game identifiers
+        const gameId = platform === 'gta5' ? 'gtav' : 'redm';
+        
+        const response = await fetch(`${FIVEM_API[platform]}?games[]=${gameId}`, {
             headers: {
                 'Accept': 'application/json',
-                'User-Agent': 'VS-Launcher-API/1.0'
+                'User-Agent': 'VS-Launcher/1.0',
+                'x-apis-key': 'xF2pSndN7PQnNAlMPdDafQ'
             },
-            timeout: 10000
+            timeout: 15000
         });
 
         if (!response.ok) {
-            throw new Error(`Upstream API error: ${response.status}`);
+            throw new Error(`FiveM API error: ${response.status}`);
         }
 
-        const data = await response.json();
+        const rawData = await response.json();
+        
+        // Transform FiveM data to match our expected format
+        const servers = (rawData || []).map(server => ({
+            id: server.EndPoint || server.id,
+            hostName: server.Hostname || server.hostname || '',
+            projectName: server.Name || server.name || '',
+            projectDescription: server.Description || server.description || '',
+            players: {
+                count: server.Players || server.players || 0,
+                maxCount: server.MaxClients || server.maxclients || 0
+            },
+            locale: server.Locale || server.locale || 'en',
+            localeCountry: server.LocaleCountry || server.localeCountry || 'us',
+            boost: server.Vars?.boost || 0,
+            tags: {
+                list: server.Tags || server.tags || []
+            },
+            iconVersion: server.IconVersion || server.iconVersion || 0,
+            offline: server.Available !== undefined ? !server.Available : false,
+            licenseType: server.LicenseType || server.licenseType || null
+        }));
+
+        const result = {
+            count: servers.length,
+            data: servers
+        };
         
         // Update cache
-        serversCache[platform] = data;
+        serversCache[platform] = result;
         serversCache.lastFetch[platform] = now;
         
-        return data;
+        return result;
     } catch (error) {
         console.error(`Error fetching servers for ${platform}:`, error.message);
         
@@ -86,12 +119,13 @@ router.get('/', async (req, res) => {
             count: data.count || 0,
             data: data.data || [],
             cached: (Date.now() - serversCache.lastFetch[platform]) < CACHE_TTL,
+            source: 'FiveM Official API',
             timestamp: new Date().toISOString()
         });
     } catch (error) {
         res.status(500).json({
             error: 'Internal Server Error',
-            message: 'Failed to fetch servers from upstream API',
+            message: 'Failed to fetch servers from FiveM API',
             details: error.message
         });
     }
@@ -122,12 +156,13 @@ router.get('/:platform', async (req, res) => {
             count: data.count || 0,
             data: data.data || [],
             cached: (Date.now() - serversCache.lastFetch[platform]) < CACHE_TTL,
+            source: 'FiveM Official API',
             timestamp: new Date().toISOString()
         });
     } catch (error) {
         res.status(500).json({
             error: 'Internal Server Error',
-            message: 'Failed to fetch servers from upstream API',
+            message: 'Failed to fetch servers from FiveM API',
             details: error.message
         });
     }
